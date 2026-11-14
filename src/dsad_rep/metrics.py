@@ -27,7 +27,7 @@ def binary_segmentation_metrics(predictions, mask):
         results.append({
             "iou": divide(t, t + f + n),          # overlap with ground truth
             "f1": divide(2 * t, 2 * t + f + n),   # same, more weight to the overlapping region
-            "precision": divide(t, t + n),        # how much predicted liver is actually liver
+            "precision": divide(t, t + f),        # how much predicted liver is actually liver
             "recall": divide(t, t + n),           # how much actual liver was detected
             "specificity": divide(z, z + f),      # how accurately non-liver pixels were rejected
         })

@@ -1,5 +1,8 @@
 import torch
 from tqdm.auto import tqdm
+from torchvision.models.segmentation.deeplabv3 import ASPPPooling
+
+from dsad_rep.devices import autocast_context
 
 from dsad_rep.metrics import (
     binary_segmentation_metrics,
@@ -8,6 +11,11 @@ from dsad_rep.metrics import (
 
 def train_one_epoch(model, loader, optimizer, criterion, device, scaler=None):
     model.train()
+
+    if loader.batch_size == 1:
+        for module in model.modules():
+            if isinstance(module, ASPPPooling):
+                module.eval()
 
     total_loss = 0
     total_images = 0
@@ -19,10 +27,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device, scaler=None):
 
         optimizer.zero_grad()
 
-        with torch.autocast(
-            device_type=device.type,
-            enabled=(device.type == "cuda"),
-        ):
+        with autocast_context(device):
             logits = model(images)
             loss = criterion(logits, masks)
 
@@ -41,9 +46,11 @@ def train_one_epoch(model, loader, optimizer, criterion, device, scaler=None):
 
         progress.set_postfix(loss=f"{loss.item():.4f}")
 
+    if total_images == 0:
+        raise ValueError("Training loader has no batches; reduce --batch-size.")
     return total_loss / total_images
 
-def validate_one_epoch(model, loader, criterion, device):
+def validate_one_epoch(model, loader, criterion, device, *, desc="Validation"):
     # switch to eval mode
     model.eval()
 
@@ -54,13 +61,13 @@ def validate_one_epoch(model, loader, criterion, device):
     # Disable gradient computation
 
     with torch.inference_mode():
-        for batch in tqdm(loader, desc="Validation", leave=False):
+        for batch in tqdm(loader, desc=desc, leave=False):
             images = batch["image"].to(device)
             masks = batch["mask"].to(device)
 
-            logits = model(images)
-
-            loss = criterion(logits, masks)
+            with autocast_context(device):
+                logits = model(images)
+                loss = criterion(logits, masks)
 
             predictions = logits.argmax(dim=1)
 
@@ -74,9 +81,12 @@ def validate_one_epoch(model, loader, criterion, device):
             total_loss += loss.item() * batch_size
             total_images += batch_size
 
+        if total_images == 0:
+            raise ValueError(f"{desc} loader has no images.")
         summary = summarize_metrics(all_metrics)
 
         summary["loss"] = total_loss / total_images
+        summary["samples"] = total_images
 
         return summary
 
